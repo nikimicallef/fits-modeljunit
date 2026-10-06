@@ -1,248 +1,206 @@
-# FITS ModelJUnit
+# FITS ModelJUnit tutorial
+
+An in-memory banking example with one shared, timed FSM model and one JUnit runner.
+All model code is in `src/test/java/fits/model/FitsModelTest.java`.
 
 ## What FITS does
 
-FITS (Financial Transaction System) is a small, in-memory banking simulation used
-by the book to teach verification. It has no database, web interface or real payment
-network. Clients and administrators interact with Java methods on `FrontEnd`.
-The word “frontend” here means an API that a user interface could call.
+An administrator creates and enables users, changes their classification, and
+approves or rejects money accounts. Users log in, request accounts, deposit money,
+pay bills, transfer money and log out. Membership determines payment fees.
+`FrontEnd` is the Java API that a client interface could call. There is no database,
+real banking network, graphical interface or application `main()`.
 
-There are three main domain objects:
+The implementation is copied from the book's chapter 10. Its defects and missing
+policy checks are retained so students can discover counterexamples.
 
-* **User:** a registered person with a name, country, membership type (gold, silver,
-  normal), listing status (white-, grey-, blacklisted), and mode (enabled, disabled,
-  frozen). Membership type determines outgoing payment charges.
-* **Money account:** an account belonging to a user, with an account number,
-  balance and an open flag. This is distinct from the person's user record.
-* **Session:** a particular login belonging to a user. Its ID is supplied to user
-  operations, and its log records those operations. One user can have several sessions.
-
-A typical interaction is:
-
-1. An administrator initialises the system, creates a user and enables that user.
-2. The user logs in and receives a session ID.
-3. The user requests a money account and receives its account number.
-4. An administrator approves that account.
-5. The user deposits money, pays an external bill, or transfers funds to another
-   account. External payments and transfers to other users incur membership-based
-   charges; transfers between the same user's accounts do not.
-6. The user logs out of the session.
-
-These are operations the code exposes, not a guarantee that it enforces that order
-or every associated policy. For example, it can log a request after logout, accept
-an eleventh account request in one session, or let a disabled user make a payment.
-The tests demonstrate those violations. The core implementation is deliberately
-preserved as a verification teaching subject.
-
-### Implementation files
-
-All six files are in `src/main/java/fits`.
-
-| File | Responsibility |
+| Implementation file | Purpose |
 |---|---|
-| `TransactionSystem.java` | Creates and connects the frontend and backend. `setup()` replaces both with fresh instances. Constructing this object does **not** perform administrator initialisation. |
-| `FrontEnd.java` | The administrator/user API. `ADMIN_*` methods manage users and approve accounts; `USER_*` methods log in, request accounts and move money. It delegates to the other classes, logs user activity, and applies payment charges. |
-| `BackEnd.java` | Stores users in memory, allocates user IDs and looks up users. `initialise()` clears the user list and creates the enabled administrator “Clark Kent”. |
-| `UserInfo.java` | Holds one user's attributes, money accounts and sessions. Creates and looks up those objects, changes the user's classification, moves funds and calculates charges. |
-| `BankAccount.java` | Holds one money account's owner, number, open flag and balance. Deposits add to the balance; withdrawals subtract from it. These methods do not themselves enforce the verification policies. |
-| `UserSession.java` | Holds a session ID, owner and text log. `log()` appends text. `openSession()` and `closeSession()` are empty; there is no stored active-session flag. |
+| `TransactionSystem.java` | Creates and connects the frontend and backend. Construction does not initialise the administrator's system. |
+| `FrontEnd.java` | Public administrator and user operations. Model actions call this API. |
+| `BackEnd.java` | Stores users, allocates IDs and performs initialisation. Tests use getters to observe results. |
+| `UserInfo.java` | One user's mode, listing status, membership, accounts, sessions and fee calculation. |
+| `BankAccount.java` | Account number, owner, open flag and balance. |
+| `UserSession.java` | Session owner, ID and operation log. Open/close methods are empty observation points. |
 
-`ADMIN_reconcile()` and `ADMIN_rejectOpenAccount()` are also stubs. A test can observe
-when they are called, but cannot establish that they perform financial reconciliation
-or persist a rejection. The code has no automatic inactivity scheduler.
+## The model's FSMs
 
-There is currently **no application `main()` runner**. Maven/JUnit runs the tests,
-which construct `TransactionSystem` instances and drive the frontend. The book's
-old `Main` and `Scenarios` drivers depended on its runtime-monitoring framework and
-were replaced by the test runners below.
+The model has its own enums, independent of the implementation. This lets an
+assertion compare what FITS actually did with what it should have done.
 
-## Test files and how they fit together
+| Enum | States | Scope |
+|---|---|---|
+| `SystemState` | `UNINITIALISED`, `STARTING`, `READY` | Whole system |
+| `UserMode` | `DISABLED`, `ENABLED`, `FROZEN` | Each user |
+| `UserStatus` | `WHITELISTED`, `GREYLISTED`, `BLACKLISTED` | Each user |
+| `UserType` | `NORMAL`, `SILVER`, `GOLD` | Each user |
+| `AccountState` | `REQUESTED`, `APPROVED`, `REJECTED`, `CLOSED` | Each money account |
+| `SessionState` | `OPEN`, `CLOSED` | Each login session |
 
-Every test file is in `src/test/java/fits/model`. “SUT” means the **system under test**:
-the real FITS implementation. An **oracle** is the independent logic that decides
-whether the observed operations satisfy a requirement.
+`ExpectedUser` is a small nested data holder in the same file. Each created user
+gets a separate instance with all three user classifications, maps of account and
+session states, balances, counters and timestamps. The `users` map retains these
+instances by their real IDs. `user` identifies the currently selected instance;
+`selectUser()` switches between users without changing FITS. Sessions and money
+accounts stay in their maps after closing so forbidden operations can be tested.
 
-There are two families: untimed models for event ordering/counters, and timed
-models for timestamped events and deadlines. The classes ending in `Test` are
-JUnit entry points. Models describe the paths; the `Runs` helpers configure
-ModelJUnit and execute them.
+For example, one user can simultaneously be `ENABLED`, `GREYLISTED` and `GOLD`,
+have two `APPROVED` accounts, and have one `OPEN` and one `CLOSED` session.
+These are independent FSMs composed into the shared model's state.
 
-### Untimed FSM tests
+## FSM diagrams
 
-| File | What it does |
-|---|---|
-| `FitsFsmModel.java` | Implements ModelJUnit's `FsmModel` for P2, P5, P6, P7, P9 and P10, one selected rule at a time. Maintains independent state such as enabled status, login status, incoming-transfer count and account-request count. Its `@Action` methods call the actual FITS API and assert the selected rule; matching `*Guard()` methods decide which actions ModelJUnit can select. `getState()` exposes a finite description, and `reset()` resets the model and, during testing, the SUT. |
-| `FsmRuns.java` | Wraps the FSM in ModelJUnit's `Model`, installs `StopOnFailureListener`, and uses a seeded `GreedyTester` to generate paths. Builds graphs, writes coverage reports, and supplies minimal counterexample sequences. P7 also uses deterministic graph discovery and boundary paths so the ten-request limit is reached reliably. |
-| `FitsFsmTest.java` | The default untimed JUnit runner. Confirms the intended counterexamples, checks P6 with zero through three incoming transfers, and generates safe paths for each rule. Expected violations are caught and checked for the correct property ID. |
-| `FitsFsmConformanceTest.java` | The strict untimed JUnit runner, enabled by `-Pconformance`. Allows violating paths and lets their assertion failures reach JUnit instead of treating them as expected counterexamples. |
+These are diagrams of the **current test model's expected behaviour**, derived
+from its enums, guards and actions. They are separate views of one composed
+model, rather than six runners. Each user has independent copies of the three
+user FSMs, and each account and session has its own lifecycle FSM.
 
-For example, the P10 counterexample flows through
-`FitsFsmTest → FsmRuns → FitsFsmModel → FrontEnd`:
-login, logout, then request an account using the old session. FITS actually appends
-to that session's log. The model's independent login state says the session is
-closed, so the P10 assertion fails. The default runner checks that this precise
-property violation occurred; the strict runner reports it as a failing test.
+Blue arrows show successful expected transitions and use exact action names.
+Conditions in brackets explain when transitions can succeed. Red dashed arrows
+show an original FITS defect or a test failure; a red failure box is not an enum
+state. Data-only actions and important implementation differences are described
+beneath each diagram. The diagrams omit most unchanged-state self-loops.
 
-### Timed tests
+### System lifecycle
 
-| File | What it does |
-|---|---|
-| `Property.java` | Defines the six timed property identifiers, P11–P16. The untimed identifiers are separately declared by `FitsFsmModel.Rule`. |
-| `Scenario.java` | Defines the timed event catalog. Each scenario has a property, name, ordered events with time offsets, and an expected failing event when applicable. Includes safe, violating, boundary and isolation cases. The small builder makes plans readable; it is not the book's EGCL DSL. |
-| `FitsTimedModel.java` | Implements `TimedFsmModel`. Holds the `@Time` clock and an `@Timeout` for the next event, selects safe/boundary/violating paths, and executes their events. Its abstract state is the selected scenario and current event index. It delegates real FITS interaction and temporal assertions to `FitsFixture`. |
-| `FitsFixture.java` | The timed SUT adapter and oracle. Calls actual frontend methods, keeps IDs and account numbers, checks results/balances, and independently tracks initialisation, whitelisting, account creations, decision deadlines and session activity. `checkpoint()` detects missing deadline events. A test-only session subclass observes actual log/close calls. It adds no policy enforcement. |
-| `TimedRuns.java` | Wraps the timed FSM in ModelJUnit's `TimedModel`, configures fast-forwarding and failure handling, replays individual scenarios, and generates seeded paths with `GreedyTester`. Writes graphs and four coverage metrics; checks reachable state/transition coverage. |
-| `Chapter10TimedTest.java` | The default timed JUnit runner. Replays every catalog scenario and verifies safe outcomes or the expected property violation at the named event. Also generates safe and boundary paths for each timed property. |
-| `Chapter10ConformanceTest.java` | The strict timed JUnit runner, enabled by `-Pconformance`. Generates paths that include violations and lets those failures propagate to JUnit. |
+![System lifecycle FSM with initialisation, startup and reconciliation actions](docs/fsm/01-system.png)
 
-For P11, the flow is
-`Chapter10TimedTest → TimedRuns → FitsTimedModel → FitsFixture → FrontEnd`.
-`Scenario` supplies a plan that initialises FITS and attempts login after 9,999 ms.
-ModelJUnit advances virtual time to the event, the fixture invokes the real login,
-and its independent timestamp check detects that ten seconds have not elapsed.
-The corresponding login at 10,000 ms is a safe boundary case. Both execute without
-waiting ten real seconds.
+### User mode
 
-Generated timed paths choose the first safe case, second safe case, and (in strict
-mode) first violating case for the selected property. Deterministic replay covers
-the rest of the catalog. Thus graph coverage applies to those selected model paths;
-it does not mean random generation explores every catalog case or every FITS behaviour.
+![User mode FSM with enable, disable, freeze and unfreeze actions](docs/fsm/02-user-mode.png)
 
-### Documentation in the Java source
+### User listing status
 
-Every handwritten class, constructor and method has Javadoc explaining its role.
-The implementation comments describe actual behaviour, including retained defects
-and empty observation points. Model comments explain guards, independent state,
-reset semantics and assertions; timing comments explain millisecond offsets,
-deadline ordering and per-object histories. Hover over methods in IntelliJ to read
-their documentation while following a test path. Executable behaviour remains the
-same as before this documentation pass.
+![User listing status FSM with blacklist, greylist and whitelist actions](docs/fsm/03-user-status.png)
 
-### Suggested reading order
+### User membership
 
-Start with `FitsFsmTest.java` and the P10 branches of `FitsFsmModel.java`, then read
-`FsmRuns.java` to see ModelJUnit configuration. For timing, start with one P11 plan
-in `Scenario.java`, follow it through `FitsTimedModel.java` and `FitsFixture.java`,
-then examine `TimedRuns.java` and `Chapter10TimedTest.java`.
+![User membership FSM with normal, silver and gold classification actions](docs/fsm/04-user-membership.png)
 
-Read the conformance runners last: they reuse the same models but change how
-violations are reported. [TUTORIAL.md](TUTORIAL.md) provides a longer lesson sequence
-and extension exercises.
+### Money accounts
 
-## Run
+![Money-account FSM with request, approval, rejection, closure and deadline check](docs/fsm/05-accounts.png)
 
-Use JDK 25 and Maven 3.9 or later:
+### Login sessions
+
+![Session FSM with login, logout, activity and inactivity deadline check](docs/fsm/06-sessions.png)
+
+The **whole model state** combines these object states with balances, counters,
+timestamps, reconciliation and transfer-restriction flags. For example,
+`USER_depositFromExternal` leaves an account APPROVED and its session OPEN,
+while changing its balance, the session's last-activity time and possibly the
+user's incoming-transfer count. `selectUser` changes the selected user only.
+`expireCreations` removes old timestamps from the rolling count without changing
+account lifecycle states. `waitForTime` changes no enum and does not reset the
+inactivity timer; the `TimedModel` wrapper advances time.
+
+PNG diagrams are in `docs/fsm`. See
+[diagram notes](docs/fsm/README.md) for scope and guard details.
+
+## Reading the single test file
+
+1. **Enums and fields** hold independent expected states and the additional data
+   needed for limits, fees and timed obligations.
+2. **`getState()`** returns a snapshot of the composed FSMs and relevant counters.
+   Exact balances and timestamps remain model data rather than appearing in the
+   state string. This is an FSM with additional data, not a complete graph of
+   every possible balance and timestamp.
+3. **`reset(boolean testing)`** clears the model and constructs a fresh
+   `TransactionSystem` when testing is true. Model-only exploration avoids real
+   API calls when testing is false.
+4. **Guards and `@Action` methods** appear together. Business actions use the
+   same names as their corresponding `FrontEnd` operations, supply example
+   arguments, call that operation, assert its result, then update expected state.
+   Setup constructs the system; business mutations go through `FrontEnd`.
+   Backend and domain getters read results for assertions.
+5. **Clock and timeout actions** implement the timed rules in the same model.
+   `@Time now` is virtual milliseconds; `-1` disables an `@Timeout`.
+   `waitForTime()` lets time progress without a business operation. No sleeps
+   are needed. Deadline helpers find the earliest outstanding obligation across
+   all users, accounts or sessions; changing the selected user does not lose timers.
+6. **`runModelJUnit()`** is the only runner. It creates `TimedModel` and
+   `GreedyTester`, sets seed 1, prints transitions with `VerboseListener`, and
+   generates up to 1,000 steps. `StopOnFailureListener` stops at the first failed
+   assertion. Coverage is printed even when an assertion fails.
+
+ModelJUnit selects among enabled actions, with `GreedyTester` favouring transitions
+it has not explored. It can also randomly reset the model to begin another path.
+There is no fixed action order or guarantee that every enabled action is tried.
+
+A guard checks whether an **attempt** can be generated. For example, login needs
+an existing enabled user, but the action still permits testing login before
+initialisation, during startup or above the session limit. Those forbidden
+attempts should be rejected by FITS and leave the expected FSM unchanged.
+Filtering them all out in the guard would hide the missing policy checks.
+
+## Running it
+
+Use Java 25 and Maven 3.9 or later. Import `pom.xml` in IntelliJ with JDK 25 and
+run the JUnit method `runModelJUnit()`, or use:
 
 ```sh
 mvn clean verify
-mvn -Pconformance test
-mvn -Dfits.seed=42 -Dfits.steps=5000 test
 ```
 
-**The default build is a characterization run, not a claim that FITS conforms.** It
-checks safe traces and confirms that deliberately violating traces fail at the
-specified event with the correct property ID. It also generates safe and boundary
-paths using `GreedyTester`, asserting complete reachable state and transition
-coverage of the selected safe graph. P7 also receives deterministic threshold
-paths to ensure the deep ten-request boundary is exercised. Its small abstract
-graph is also discovered deterministically; the other graphs use `buildGraph()`. Each strict assertion is delivered through
-`StopOnFailureListener`; unrelated errors cannot count as an expected violation.
+**The test currently fails because FITS does not conform.** The failure is not
+caught or converted into a passing test. With seed 1 the first counterexample is
+P6: a greylisted user is whitelisted before three incoming transfers. Read the
+printed transitions leading to the failed assertion. Fixing that defect or
+changing the seed can expose a different first failure.
 
-**The `conformance` profile additionally runs uncaught property assertions.** The
-unchanged implementation is expected to produce twelve generated failing tests:
-six untimed properties and six timed properties. P7 includes a deterministic
-counterexample fallback if random generation does not reach its eleventh request. This profile intentionally exits with a failing Maven status. P14 and P15
-include obligations of the administrator/environment: missing those events violates
-the trace; it does not mean FITS should autonomously reconcile or decide accounts.
-The same distinction applies to explicit user logout traces versus automatic session
-closure for P16. Strict tests are enabled only by the explicit conformance profile; all known
-counterexamples are checked by the default characterization run.
+To compile and package without executing the tutorial test:
 
-Import `pom.xml` into IntelliJ and select JDK 25 for both the project and Maven runner.
-Build output, IntelliJ metadata and other editor/OS noise are ignored by `.gitignore`.
+```sh
+mvn -DskipTests package
+```
 
-## Requirements and coverage
+## Rules represented
 
-| Property | Requirement | Cases |
+| Rule | What the rule means | How the shared model checks it |
 |---|---|---|
-| P11 | No session opened in the first 10 seconds after initialisation | Immediate login, 1 ms before, exactly at, after; reinitialisation restarts the window |
-| P12 | After blacklisting then whitelisting, no single external transfer above $100 for 12 hours | 1 ms before/at/after 12h; $100 principal plus fees; own-account transfers; per-user isolation; repeated whitelist; renewed blacklist/whitelist; incoming external deposit |
-| P13 | At most 3 accounts created per user in any rolling 24 hours | Fourth request before/at/after expiry; per-user isolation; rolling window across calendar days |
-| P14 | Reconcile within 5 minutes of initialisation or before the next initialisation, whichever occurs first | Before/at/after deadline; missing reconciliation; early reinitialisation; reconciliation before reinitialisation |
-| P15 | Approve or reject each new account within 24 hours | Both outcomes before/at/after deadline; missing decision; independent and staggered account deadlines |
-| P16 | Close each session within 15 minutes of user inactivity | Before/at/after logout; missing closure; activity resets timer; admin actions do not; independent sessions; logout cancellation |
+| **P2 — Initialise before login** | An enabled user must not be able to open a session before the transaction system has been initialised. Enabling the user alone is not sufficient. | `USER_login` allows the attempt but expects rejection while the system is `UNINITIALISED`. An accepted login at this point fails the assertion. |
+| **P5 — No withdrawals while disabled** | After the administrator disables a user, the user must not withdraw money until enabled again. An existing session does not grant permission to continue withdrawing. | `USER_payToExternal` attempts a payment and expects rejection when the user's mode is not `ENABLED`, including `DISABLED` and `FROZEN`. The expected balance must remain unchanged. |
+| **P6 — Three incoming transfers before whitelisting** | A greylisted user must receive at least three incoming transfers before being whitelisted. Entering `GREYLISTED` starts a new count for that user. | `USER_depositFromExternal` counts incoming deposits while greylisted. `ADMIN_whitelistUser` expects the status to remain `GREYLISTED` below three transfers, and permits `WHITELISTED` once the count reaches three. |
+| **P7 — Ten account requests per session** | A user may request at most ten new money accounts through a particular session. The count belongs to the session, so a different session has its own allowance. | `USER_requestAccount` keeps a separate count for each session. After ten accepted requests, another attempt must return no account number and must not increase the real account count. |
+| **P9 — Three concurrent sessions per user** | A user may have several sessions, but no more than three may be open simultaneously. Logging out frees a place; retaining a closed session record does not use that place. | `USER_login` counts that user's `OPEN` session FSMs and expects a fourth concurrent login to be rejected. `USER_logout` changes one session to `CLOSED`. |
+| **P10 — Logging only in an active session** | Operations must not append entries to a session's log after that session has been closed. Knowing an old session ID does not make it active again. | User actions can select retained `CLOSED` sessions. `observeActivity` compares the real log before and after the operation and asserts that it has not changed. |
+| **P11 — Ten-second startup period** | Even after initialisation, no session should open during the first ten seconds. Login becomes eligible once this startup period has completed. | `ADMIN_initialise` starts a ten-second timer. `USER_login` expects rejection while the system is `STARTING`; `finishStartup` moves it to `READY` when the deadline is reached. |
+| **P12 — Twelve-hour transfer restriction** | When a blacklisted user is whitelisted, that user must not perform a single external transfer above $100 for the next twelve hours. The limit concerns the transfer amount, not its fee. | `ADMIN_whitelistUser` starts the restriction for that user. `USER_payToExternal` attempts $101 and expects rejection while restricted; `finishRestriction` clears the restriction at twelve hours. The example's $100 deposits do not exceed the limit. |
+| **P13 — Three creations in a rolling day** | A user may have at most three money accounts created within any rolling 24-hour period. This is a moving window, rather than an allowance that resets at midnight. | `USER_requestAccount` checks that user's recent creation timestamps and expects another creation to be rejected once three are in the window. `expireCreations` removes timestamps aged 24 hours without deleting the account FSMs. |
+| **P14 — Reconcile within five minutes** | An administrator must perform reconciliation within five minutes of initialisation. This checks an obligation on the generated administrator schedule. | `ADMIN_initialise` starts the deadline; `ADMIN_reconcile` records the event and cancels it. `checkReconciliation` fails if the event is missing at the deadline. The model also guards reinitialisation until reconciliation has occurred. |
+| **P15 — Decide an account request within a day** | Each requested money account must be approved or rejected within 24 hours of its creation. Deciding one account does not discharge another account's obligation. | `ADMIN_approveOpenAccount` and `ADMIN_rejectOpenAccount` change that account's expected state. `checkAccountDecisions` fails if an account is still `REQUESTED` when its individual deadline is reached. |
+| **P16 — Close an idle session within fifteen minutes** | Each session must be closed within fifteen minutes of inactivity. Activity in one session must not keep another session alive. | `observeActivity` updates only the selected open session's last-activity time. `USER_logout` records closure; `checkInactivity` fails if a session remains `OPEN` at its inactivity deadline. Administrator actions and `waitForTime` do not restart this timer. |
 
-The untimed `FitsFsmModel` also covers P2, P5, P6, P7, P9 and P10 from earlier
-chapters. P1 (country/type), P3 (balance), P4 (unique account IDs), and P8 (aggregate
-reconciliation thresholds) are not included; they are useful extension exercises.
-The P8 implementation is an extended FSM with aggregate counters rather than a
-simple lifecycle FSM. See [TUTORIAL.md](TUTORIAL.md) for a suggested lesson sequence.
-The book contains additional advanced timer exercises; this suite covers the
-implemented chapter10-solutions rules, including Exercise 10.2, rather than adding
-new policies from exercises absent from that solution.
+Additional untimed transitions cover enabling, disabling, freezing, unfreezing,
+listing status and all three membership types. Fee expectations reflect membership.
+The original unfreeze operation wrongly disables the user; its assertion expects
+`ENABLED`.
 
-## Timing and modelling
+## Scope and interpretation
 
-`FitsTimedModel` implements `TimedFsmModel`. Its public `@Time int now` measures
-milliseconds; `@Timeout("executeEvent")` schedules the next event. The model is
-wrapped in `TimedModel`, as in the supplied BadLogin `TimedTest.java` example.
-Timeout probability 1 makes ModelJUnit fast-forward directly to the next scheduled
-event. `elapse()` is an unguarded action so the model can advance when no ordinary
-transition is enabled. Inactive timeouts use `TIMEOUT_DISABLED` (-1).
+The example explores up to two ordinary Argentinian users, four allocated sessions
+per user (including a fourth login attempt), and eleven accounts per user. The
+built-in administrator is a setup fixture. Deposits use $100 and external payments
+use $101. Own-account and inter-user transfers, arbitrary amounts, countries and
+other API inputs are extension exercises. P1, P3, P4 and P8 are not separately
+implemented as general property checks.
 
-The guarded actions `chooseSafe`, `chooseBoundary` and `chooseViolation` form
-alternative paths. `GreedyTester` chooses paths and resets using a fixed,
-configurable seed. Every catalog case also receives a deterministic replay through
-ModelJUnit's timed action API so boundary coverage does not depend on chance.
-Equal-time events execute in declared order. Absolute time is excluded from
-`getState()`; time alone cannot mutate the abstract model state. The first event is
-scheduled at a positive epoch because ModelJUnit 2.5 ignores timeouts at zero.
+All listed checks share one model, but the first failure ends a run. Including a
+check does not mean that the run reached it. The three-per-day limit can mask the
+ten-per-session limit until enough virtual time has elapsed. Coverage describes
+only the observed path; transition coverage has an unknown total (`???`) because
+this example does not build a complete graph.
 
-`FitsFixture` invokes the real FITS frontend, checks SUT results/balances, and
-maintains an independent temporal oracle for the property under test. The original
-FITS has no wall-clock reads, scheduler or injected clock; virtual time belongs to
-the trace oracle. The adapter never prevents forbidden calls, automatically approves
-accounts, reconciles or closes sessions. At a deadline, `checkpoint()` reports a
-missing event even when no further system action occurs.
+Account rejection and reconciliation are stubs. The model records their API events,
+not completion of accounting work. Sessions have no active-state getter or automatic
+scheduler; their expected OPEN/CLOSED states follow login/logout events. P14 and
+P15 check obligations on the generated administrator schedule, while P16 checks
+for an observed close event. These timeout failures alone do not demonstrate which
+component should have supplied the missing event. A production implementation
+would need observable completion and automatic expiry where required.
 
-The deadline convention is explicit: an event at the deadline is accepted if it is
-ordered before the checkpoint at that same timestamp. Once virtual time passes a
-deadline, failure is reported before a late event can clear it. For P13, the window
-is half-open: a creation exactly 24 hours old expires. Times in this bounded catalog
-fit ModelJUnit's signed 32-bit integer clock.
-
-`reset(false)` resets only abstract model fields and creates no SUT. Graph discovery
-therefore cannot operate on or assert against a stale SUT. `reset(true)` creates a
-fresh transaction system and oracle. Both path and timeout RNGs are reseeded after
-graph discovery for reproducible generation.
-
-`UserSession.openSession()` and `closeSession()` are empty and expose no open-state
-query. After the real login call, the fixture installs a test-only `UserSession`
-subclass in the session list to observe actual `log` and `closeSession` calls,
-matching the original AspectJ observation points. It delegates to the original
-methods and records events; it adds no timeout enforcement. Similarly,
-`ADMIN_reconcile` and `ADMIN_rejectOpenAccount` are stubs: these tests verify their
-call timing, not financial reconciliation correctness or persistent rejection state.
-
-## Differences from the supplied solution
-
-* P13's solution compares the oldest creation to `now + 24h`, which never expires
-  old entries correctly. The oracle implements the book's rolling-window requirement:
-  expire entries when `now - created >= 24h`.
-* P12 checks the external transfer's principal, excluding charges, and includes
-  incoming external deposits as external transfers. The solution observes
-  `UserInfo.withdrawFrom`, which sees fee-inclusive debits, misses deposits, and also
-  sees transfers to other FITS users. This suite follows the stated external-transfer
-  criterion and explicitly excludes own-account transfers. Inter-user transfer
-  classification is not tested; the external API paths are deposit and pay.
-* P14 includes the solution's prohibition on reinitialisation before reconciliation.
-* P15 observes the returned account identifier directly instead of parsing a log
-  string (a workaround for the EGCL DSL's inability to capture return values).
-* Properties are tested independently. The book's P12/P13 scenarios leave sessions
-  idle for hours and would otherwise trigger P16 first, hiding the target property.
-* Equal-time deadline ordering is deterministic, unlike the book's background timer
-  thread. These tests verify logical timing and event criteria, not scheduler latency.
-
-DOT graphs and coverage summaries are written to `target/modeljunit/P<property-number>`
-for all twelve included properties. Surefire reports are under `target/surefire-reports`. A strict run stops each
-property at its first violation, so its coverage is intentionally partial.
+Forbidden login is expected to return `-1`; forbidden account creation is expected
+to return `null` without creating an account. Those are tutorial rejection contracts
+for APIs whose original implementation omits these checks. Exactly 24-hour-old
+creations expire from the rolling window. A decision at its deadline is accepted
+if its event occurs before the corresponding timeout check.
