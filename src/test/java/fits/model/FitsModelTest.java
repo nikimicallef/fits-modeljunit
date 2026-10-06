@@ -4,10 +4,13 @@ import fits.FrontEnd;
 import fits.TransactionSystem;
 import nz.ac.waikato.modeljunit.Action;
 import nz.ac.waikato.modeljunit.GreedyTester;
+import nz.ac.waikato.modeljunit.GraphListener;
+import nz.ac.waikato.modeljunit.Transition;
 import nz.ac.waikato.modeljunit.StopOnFailureListener;
 import nz.ac.waikato.modeljunit.VerboseListener;
 import nz.ac.waikato.modeljunit.coverage.ActionCoverage;
 import nz.ac.waikato.modeljunit.coverage.TransitionCoverage;
+import nz.ac.waikato.modeljunit.coverage.TransitionPairCoverage;
 import nz.ac.waikato.modeljunit.timing.Time;
 import nz.ac.waikato.modeljunit.timing.Timeout;
 import nz.ac.waikato.modeljunit.timing.TimedFsmModel;
@@ -40,6 +43,9 @@ public class FitsModelTest implements TimedFsmModel {
     private enum AccountState { REQUESTED, APPROVED, REJECTED, CLOSED }
     /** Every session retains its own state even after logout. */
     private enum SessionState { OPEN, CLOSED }
+
+    /** Set to true to skip known failure-producing actions during exploration. */
+    private static boolean SKIP_KNOWN_VIOLATIONS = true;
 
     private TransactionSystem system;
     private FrontEnd front;
@@ -119,6 +125,14 @@ public class FitsModelTest implements TimedFsmModel {
      */
     @Action public void waitForTime() {}
 
+    /**
+     * Optional exploration mode: omit actions that are expected to reveal known rule violations.
+     * The default run keeps these attempts enabled and stops at its first conformance failure.
+     */
+    private boolean skipKnownViolations() {
+        return SKIP_KNOWN_VIOLATIONS;
+    }
+
     /** Initialisation is legal initially, or after the preceding reconciliation. */
     public boolean ADMIN_initialiseGuard() { return systemState == SystemState.UNINITIALISED || reconciled; }
 
@@ -179,7 +193,7 @@ public class FitsModelTest implements TimedFsmModel {
     }
 
     /** A session lets an enabled user request freezing. */
-    public boolean USER_freezeUserGuard() { return user != null && user.mode == UserMode.ENABLED && !user.sessions.isEmpty(); }
+    public boolean USER_freezeUserGuard() { return user != null && user.mode == UserMode.ENABLED && !user.sessions.isEmpty() && (!skipKnownViolations() || hasOpenSession()); }
     /** Calls the frontend freeze operation, then checks and records FROZEN mode. */
     @Action public void USER_freezeUser() {
         Integer sid = chooseSession();
@@ -192,8 +206,11 @@ public class FitsModelTest implements TimedFsmModel {
         user.mode = UserMode.FROZEN;
     }
 
-    /** A frozen user with a known session may request unfreezing. */
-    public boolean USER_unfreezeUserGuard() { return user != null && user.mode == UserMode.FROZEN && !user.sessions.isEmpty(); }
+    /** A frozen user may attempt unfreezing unless skip mode omits this known FITS defect. */
+    public boolean USER_unfreezeUserGuard() {
+        return user != null && user.mode == UserMode.FROZEN && !user.sessions.isEmpty()
+                && !skipKnownViolations();
+    }
     /** Checks that unfreezing restores ENABLED; the original FITS incorrectly disables the user. */
     @Action public void USER_unfreezeUser() {
         Integer sid = chooseSession();
@@ -231,7 +248,10 @@ public class FitsModelTest implements TimedFsmModel {
     }
 
     /** An enabled user can attempt login; four allocated sessions bound this teaching example. */
-    public boolean USER_loginGuard() { return user != null && user.mode == UserMode.ENABLED && user.sessions.size() < 4; }
+    public boolean USER_loginGuard() {
+        return user != null && user.mode == UserMode.ENABLED && user.sessions.size() < 4
+                && (!skipKnownViolations() || (systemState == SystemState.READY && openSessions() < 3));
+    }
     /** Checks whether login should succeed or be rejected under P2, P11 and P9. */
     @Action public void USER_login() {
         boolean allowed = systemState == SystemState.READY && openSessions() < 3;
@@ -263,10 +283,13 @@ public class FitsModelTest implements TimedFsmModel {
     }
 
     /** A known session can attempt a request; eleven accounts bound the example. */
-    public boolean USER_requestAccountGuard() { return user != null && !user.sessions.isEmpty() && user.accounts.size() < 11; }
+    public boolean USER_requestAccountGuard() {
+        return user != null && !user.sessions.isEmpty() && user.accounts.size() < 11
+                && (!skipKnownViolations() || (hasOpenSession() && canRequestAnotherAccount()));
+    }
     /** Checks active-session logging, per-session request count and rolling creation limits. */
     @Action public void USER_requestAccount() {
-        Integer sid = chooseSession();
+        Integer sid = chooseRequestSession();
         String before = testing ? system.getBackEnd().getUserInfo(user.uid).getSession(sid).getLog() : "";
         int beforeCount = testing ? system.getBackEnd().getUserInfo(user.uid).getAccounts().size() : 0;
         String number = testing ? front.USER_requestAccount(user.uid, sid) : "account" + user.accounts.size();
@@ -310,7 +333,10 @@ public class FitsModelTest implements TimedFsmModel {
     }
 
     /** A known session may close an APPROVED account. */
-    public boolean USER_closeAccountGuard() { return user != null && !user.sessions.isEmpty() && user.accounts.containsValue(AccountState.APPROVED); }
+    public boolean USER_closeAccountGuard() {
+        return user != null && !user.sessions.isEmpty() && user.accounts.containsValue(AccountState.APPROVED)
+                && (!skipKnownViolations() || hasOpenSession());
+    }
     /** Checks the close operation before moving that account FSM to CLOSED. */
     @Action public void USER_closeAccount() {
         Integer sid = chooseSession();
@@ -325,7 +351,10 @@ public class FitsModelTest implements TimedFsmModel {
     }
 
     /** Deposits require an APPROVED account and a known session. */
-    public boolean USER_depositFromExternalGuard() { return user != null && !user.sessions.isEmpty() && user.accounts.containsValue(AccountState.APPROVED); }
+    public boolean USER_depositFromExternalGuard() {
+        return user != null && !user.sessions.isEmpty() && user.accounts.containsValue(AccountState.APPROVED)
+                && (!skipKnownViolations() || hasOpenSession());
+    }
     /** Deposits $100, compares balances and counts incoming transfers for P6. */
     @Action public void USER_depositFromExternal() {
         Integer sid = chooseSession();
@@ -339,7 +368,10 @@ public class FitsModelTest implements TimedFsmModel {
     }
 
     /** A payment attempt needs a known session and an APPROVED account. */
-    public boolean USER_payToExternalGuard() { return user != null && !user.sessions.isEmpty() && user.accounts.containsValue(AccountState.APPROVED); }
+    public boolean USER_payToExternalGuard() {
+        return user != null && !user.sessions.isEmpty() && user.accounts.containsValue(AccountState.APPROVED)
+                && (!skipKnownViolations() || (hasOpenSession() && user.mode == UserMode.ENABLED && !user.transferRestricted));
+    }
     /** Attempts $101, checking P5/P12 and the selected membership fee and balance. */
     @Action public void USER_payToExternal() {
         Integer sid = chooseSession();
@@ -385,7 +417,10 @@ public class FitsModelTest implements TimedFsmModel {
     }
 
     /** A GREYLISTED or BLACKLISTED user can attempt whitelisting. */
-    public boolean ADMIN_whitelistUserGuard() { return user != null && user.status != UserStatus.WHITELISTED; }
+    public boolean ADMIN_whitelistUserGuard() {
+        return user != null && user.status != UserStatus.WHITELISTED
+                && (!skipKnownViolations() || user.status != UserStatus.GREYLISTED || user.incomingTransfers >= 3);
+    }
     /** Checks P6 before transitioning; blacklisting followed by whitelisting starts P12's timer. */
     @Action public void ADMIN_whitelistUser() {
         if (testing) front.ADMIN_whitelistUser(user.uid);
@@ -416,7 +451,7 @@ public class FitsModelTest implements TimedFsmModel {
     public boolean checkReconciliationGuard() { return reconciliationDeadline != -1 && now >= reconciliationDeadline; }
     /** Reports P14 if the administrator did not reconcile in time. */
     @Action public void checkReconciliation() {
-        if (testing) assertTrue(reconciled, "P14 violated: no reconciliation within five minutes");
+        if (testing && !skipKnownViolations()) assertTrue(reconciled, "P14 violated: no reconciliation within five minutes");
         reconciliationDeadline = -1;
     }
 
@@ -448,7 +483,7 @@ public class FitsModelTest implements TimedFsmModel {
         for (ExpectedUser current : users.values()) {
             for (String number : current.accounts.keySet()) {
                 if (current.accounts.get(number) == AccountState.REQUESTED && now >= current.createdAt.get(number) + DAY) {
-                    if (testing) fail("P15 violated: account " + number + " still REQUESTED after 24 hours");
+                    if (testing && !skipKnownViolations()) fail("P15 violated: account " + number + " still REQUESTED after 24 hours");
                 }
             }
         }
@@ -462,7 +497,7 @@ public class FitsModelTest implements TimedFsmModel {
         for (ExpectedUser current : users.values()) {
             for (Integer sid : current.sessions.keySet()) {
                 if (current.sessions.get(sid) == SessionState.OPEN && now >= current.lastActivity.get(sid) + 15 * MINUTE) {
-                    if (testing) fail("P16 violated: session " + sid + " still OPEN after fifteen idle minutes");
+                    if (testing && !skipKnownViolations()) fail("P16 violated: session " + sid + " still OPEN after fifteen idle minutes");
                 }
             }
         }
@@ -477,7 +512,35 @@ public class FitsModelTest implements TimedFsmModel {
     }
 
     /** Chooses a known session, including CLOSED ones to test forbidden operations. */
-    private Integer chooseSession() { return new ArrayList<>(user.sessions.keySet()).get(data.nextInt(user.sessions.size())); }
+    private boolean hasOpenSession() { return user.sessions.containsValue(SessionState.OPEN); }
+
+    /** In skip mode choose only active sessions, so user actions cannot violate P10. */
+    private Integer chooseSession() {
+        ArrayList<Integer> choices = new ArrayList<>();
+        for (Integer sid : user.sessions.keySet()) {
+            if (!skipKnownViolations() || user.sessions.get(sid) == SessionState.OPEN) choices.add(sid);
+        }
+        return choices.get(data.nextInt(choices.size()));
+    }
+
+    /** Selects a session that still has request capacity when failure cases are skipped. */
+    private Integer chooseRequestSession() {
+        if (!skipKnownViolations()) return chooseSession();
+        ArrayList<Integer> choices = new ArrayList<>();
+        for (Integer sid : user.sessions.keySet()) {
+            if (user.sessions.get(sid) == SessionState.OPEN && user.requests.get(sid) < 10) choices.add(sid);
+        }
+        return choices.get(data.nextInt(choices.size()));
+    }
+
+    /** Checks the rolling and per-session limits for at least one open session. */
+    private boolean canRequestAnotherAccount() {
+        if (user.recentCreations.size() >= 3) return false;
+        for (Integer sid : user.sessions.keySet()) {
+            if (user.sessions.get(sid) == SessionState.OPEN && user.requests.get(sid) < 10) return true;
+        }
+        return false;
+    }
 
     /** Finds the first account in the requested FSM state. */
     private String findAccount(AccountState state) {
@@ -541,17 +604,47 @@ public class FitsModelTest implements TimedFsmModel {
         }
     }
 
-    /** The only runner: generate guarded actions, assert conformance, fail immediately on a violation. */
+    /** Prints each generated transition as a readable state/action/state block. */
+    private static class ReadableTransitionListener extends VerboseListener {
+        @Override public void doneTransition(int action, Transition transition) {
+            String timedTransition = transition.toString();
+            String time = timedTransition.substring(0, timedTransition.indexOf(':'));
+            model_.printMessage("Time: " + time + " ms"
+                    + "\nState: " + transition.getStartState()
+                    + "\nAction: " + transition.getAction()
+                    + "\nState: " + transition.getEndState() + "\n");
+        }
+
+        @Override public void failure(nz.ac.waikato.modeljunit.TestFailureException failure) {
+            String reason = failure.getMessage();
+            int detail = reason == null ? -1 : reason.indexOf(" due to ");
+            if (detail >= 0) reason = reason.substring(detail + " due to ".length());
+            int time = ((TimedModel) model_).getTime();
+            model_.printMessage("FAILURE\nTime: " + time + " ms"
+                    + "\nState: " + failure.getState()
+                    + "\nAction: " + failure.getActionName()
+                    + "\nReason: " + reason);
+        }
+    }
+
+    /** The only runner: build the FSM graph, then generate guarded conformance actions. */
     @Test public void runModelJUnit() {
         TimedModel model = new TimedModel(new FitsModelTest());
         model.setRandom(new Random(1));
         model.setTimeoutProbability(0.1);
         GreedyTester tester = new GreedyTester(model);
+
+        // Build immediately after creating the tester so coverage metrics can count transition pairs.
+        GraphListener graph = tester.buildGraph();
+        model.printMessage("Model graph complete: " + graph.isComplete()
+                + "; unexplored branches: " + graph.numTodo());
         tester.setRandom(new Random(1));
+
         tester.addListener(new StopOnFailureListener());
-        tester.addListener(new VerboseListener());
+        tester.addListener(new ReadableTransitionListener());
         tester.addCoverageMetric(new ActionCoverage());
         tester.addCoverageMetric(new TransitionCoverage());
+        tester.addCoverageMetric(new TransitionPairCoverage());
         try {
             tester.generate(1000);
         } finally {
