@@ -190,15 +190,6 @@ To compile and package without executing the tutorial tests:
 mvn -DskipTests package
 ```
 
-## State-space comparison
-
-The original combined model's graph build found **1,968 states and 4,091
-transitions**, then stopped at its 10,000-step limit with **12,090 unexplored
-branches**. The largest graph in this sample has **15 states**, compared with
-1,968 states in the combined graph. Separate state counts do not add up to a
-whole-system state count: each graph explores a different abstraction and holds
-other objects fixed.
-
 ## Scope and interpretation
 
 The split models trade cross-object coverage for smaller graphs:

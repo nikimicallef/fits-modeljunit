@@ -27,6 +27,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * states. Counts are used because the IDs do not change the rules being checked.
  */
 public class SessionModelTest implements TimedFsmModel {
+    private static final boolean SKIP_KNOWN_VIOLATIONS = true;
+    private static final int SECOND = 1_000;
+    private static final int MINUTE = 60 * SECOND;
+
+    // States
     /** Product enum for up to four session instances, plus the fixture's initial state. */
     private enum SessionGraphState {
         NO_USER, NO_SESSIONS,
@@ -46,12 +51,10 @@ public class SessionModelTest implements TimedFsmModel {
             return valueOf(name);
         }
     }
-    private static final boolean SKIP_KNOWN_VIOLATIONS = true;
-    private static final int SECOND = 1_000;
-    private static final int MINUTE = 60 * SECOND;
-
     /** One base FSM 6 enum state per session ID. */
     private final Map<Integer, SessionState> sessions = new LinkedHashMap<>();
+
+    // State variables
     /** Inactivity data for each session; these timestamps do not create graph states. */
     private final Map<Integer, Integer> lastActivity = new LinkedHashMap<>();
     private TransactionSystem system;

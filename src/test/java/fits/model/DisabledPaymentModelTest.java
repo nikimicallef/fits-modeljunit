@@ -23,6 +23,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * graph states.
  */
 public class DisabledPaymentModelTest implements TimedFsmModel {
+    private static final boolean SKIP_KNOWN_VIOLATIONS = true;
+
+    // States
     /** Test-local product enum for the two base FSMs used by this payment property. */
     private enum PaymentGraphState {
         NO_USER(null, null),
@@ -50,8 +53,11 @@ public class DisabledPaymentModelTest implements TimedFsmModel {
             throw new IllegalStateException("No combined state for " + mode + " and " + membership);
         }
     }
-    private static final boolean SKIP_KNOWN_VIOLATIONS = true;
+    /** Base FSM states; PaymentGraphState combines these two enums for ModelJUnit's graph. */
+    private UserMode mode;
+    private UserType membership;
 
+    // State variables
     private TransactionSystem system;
     private FrontEnd front;
     private boolean testing;
@@ -59,9 +65,6 @@ public class DisabledPaymentModelTest implements TimedFsmModel {
     private Integer uid;
     private Integer sid;
     private String account;
-    /** Base FSM states; PaymentGraphState combines these two enums for ModelJUnit's graph. */
-    private UserMode mode;
-    private UserType membership;
     /** Data used to compute payment results; not part of the enum graph state. */
     private double balance;
     private int paymentAttempts;

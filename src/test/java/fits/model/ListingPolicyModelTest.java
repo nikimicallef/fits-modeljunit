@@ -23,12 +23,17 @@ import static org.junit.jupiter.api.Assertions.*;
  * extra graph states.
  */
 public class ListingPolicyModelTest implements TimedFsmModel {
-    /** The only graph state before the fixture has created the user. */
-    private enum FixtureState { NO_USER }
     private static final boolean SKIP_KNOWN_VIOLATIONS = true;
     private static final int SECOND = 1_000;
     private static final int HOUR = 60 * 60 * SECOND;
 
+    // States
+    /** The only graph state before the fixture has created the user. */
+    private enum FixtureState { NO_USER }
+    /** Base FSM 3 state; the local graph enum only adds a pre-fixture state. */
+    private UserStatus listing;
+
+    // State variables
     private TransactionSystem system;
     private FrontEnd front;
     private boolean testing;
@@ -36,8 +41,6 @@ public class ListingPolicyModelTest implements TimedFsmModel {
     private Integer uid;
     private Integer sid;
     private String account;
-    /** Base FSM 3 state; the local graph enum only adds a pre-fixture state. */
-    private UserStatus listing;
     /** Rule data for P6/P12; these values do not create graph states. */
     private int incomingTransfers;
     private int depositsUsed;

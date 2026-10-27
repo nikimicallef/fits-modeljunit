@@ -25,14 +25,19 @@ import static org.junit.jupiter.api.Assertions.*;
  * generated action sequences can still exercise the numeric rules.
  */
 public class AccountRequestModelTest implements TimedFsmModel {
-    /** Setup markers before this model has a user/session or a money-account instance. */
-    private enum FixtureState { NO_SESSION, NO_ACCOUNT }
     private static final boolean SKIP_KNOWN_VIOLATIONS = true;
     private static final int SECOND = 1_000;
     private static final int MINUTE = 60 * SECOND;
     private static final int HOUR = 60 * MINUTE;
     private static final int DAY = 24 * HOUR;
 
+    // States
+    /** Setup markers before this model has a user/session or a money-account instance. */
+    private enum FixtureState { NO_SESSION, NO_ACCOUNT }
+    /** Base FSM 5 state; null means that no account has been requested in this model yet. */
+    private AccountState accountState;
+
+    // State variables
     private final ArrayList<Integer> recentCreations = new ArrayList<>();
     private TransactionSystem system;
     private FrontEnd front;
@@ -43,8 +48,6 @@ public class AccountRequestModelTest implements TimedFsmModel {
     /** Account number for the lifecycle currently represented by accountState. */
     private String currentAccount;
     private String pendingAccount;
-    /** Base FSM 5 state; null means that no account has been requested in this model yet. */
-    private AccountState accountState;
     /** Request-limit data used by guards, but not additional account FSM states. */
     private int requestsThisSession;
     private int nextAccount;

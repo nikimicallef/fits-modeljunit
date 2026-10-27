@@ -18,6 +18,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** FSM for system initialisation, the startup delay, login readiness and reconciliation (P2, P11, P14). */
 public class SystemTimingModelTest implements TimedFsmModel {
+    /** Change to false to let the known FITS policy defects fail the test. */
+    private static final boolean SKIP_KNOWN_VIOLATIONS = true;
+    private static final int SECOND = 1_000;
+    private static final int MINUTE = 60 * SECOND;
+
+    // States
     /** Composite enum for the system lifecycle and optional user-mode FSMs in this test. */
     private enum TimingGraphState {
         UNINITIALISED_NO_USER(SystemState.UNINITIALISED, null),
@@ -48,17 +54,14 @@ public class SystemTimingModelTest implements TimedFsmModel {
         }
     }
 
-    /** Change to false to let the known FITS policy defects fail the test. */
-    private static final boolean SKIP_KNOWN_VIOLATIONS = true;
-    private static final int SECOND = 1_000;
-    private static final int MINUTE = 60 * SECOND;
-
-    private TransactionSystem system;
-    private FrontEnd front;
     /** Base FSM 1 state, combined with user mode in TimingGraphState. */
     private SystemState state;
     /** Base FSM 2 state for the fixture user. */
     private UserMode mode;
+
+    // State variables
+    private TransactionSystem system;
+    private FrontEnd front;
     /** Setup and timing data used by guards; kept separate from the base FSM enums. */
     private boolean hasUser;
     private boolean reconciled;
