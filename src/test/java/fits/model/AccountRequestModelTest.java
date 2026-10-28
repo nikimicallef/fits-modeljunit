@@ -66,8 +66,11 @@ public class AccountRequestModelTest implements TimedFsmModel {
 
     @Override public void reset(boolean testing) {
         this.testing = testing;
-        system = new TransactionSystem();
-        front = system.getFrontEnd();
+        // Graph exploration passes false; only a real test reset creates a fresh SUT.
+        if (testing) {
+            system = new TransactionSystem();
+            front = system.getFrontEnd();
+        }
         ready = false;
         uid = sid = null;
         currentAccount = null;

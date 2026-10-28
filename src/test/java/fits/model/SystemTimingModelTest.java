@@ -88,8 +88,11 @@ public class SystemTimingModelTest implements TimedFsmModel {
         reconciled = false;
         now = 0;
         startupAt = reconcileBy = -1;
-        system = new TransactionSystem();
-        front = system.getFrontEnd();
+        // Graph exploration passes false; only a real test reset creates a fresh SUT.
+        if (testing) {
+            system = new TransactionSystem();
+            front = system.getFrontEnd();
+        }
     }
 
     @Override public int getNextTimeIncrement(Random random) { return SECOND; }

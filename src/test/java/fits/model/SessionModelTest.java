@@ -84,8 +84,11 @@ public class SessionModelTest implements TimedFsmModel {
         activityRequests = 0;
         now = 0;
         inactivityAt = -1;
-        system = new TransactionSystem();
-        front = system.getFrontEnd();
+        // Graph exploration passes false; only a real test reset creates a fresh SUT.
+        if (testing) {
+            system = new TransactionSystem();
+            front = system.getFrontEnd();
+        }
         uid = null;
     }
 
